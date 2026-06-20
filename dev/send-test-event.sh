@@ -7,7 +7,13 @@ source "${ROOT_DIR}/dev/common.sh"
 
 AWS_ENDPOINT="${AWS_ENDPOINT:-http://localhost:4566}"
 QUEUE_NAME="${QUEUE_NAME:-ecr-push-events}"
-IMAGE_TAG="${IMAGE_TAG:-dev-$(date +%s)}"
+IMAGE_TAG="${IMAGE_TAG:-}"
+if [[ -z "$IMAGE_TAG" && -f "${ROOT_DIR}/dev/.last-image-tag" ]]; then
+  IMAGE_TAG="$(cat "${ROOT_DIR}/dev/.last-image-tag")"
+fi
+if [[ -z "$IMAGE_TAG" ]]; then
+  IMAGE_TAG="$(demo_git_sha "$ROOT_DIR")"
+fi
 IMAGE_DIGEST="${IMAGE_DIGEST:-sha256:deadbeef}"
 REPOSITORY="${REPOSITORY:-${ECR_REPO}}"
 EVENT_TIME="${EVENT_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"

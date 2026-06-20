@@ -137,8 +137,8 @@ kubectl -n "$NAMESPACE" apply -f dev/manifests/application.yaml
 kubectl -n "$NAMESPACE" apply -f dev/manifests/imageupdater.yaml
 kubectl apply -f dev/manifests/workload.yaml
 
-echo "==> Building initial fake ECR image $(ecr_image_ref dev-initial)"
-IMAGE_TAG=dev-initial ./dev/build-test-image.sh >/dev/null
+echo "==> Building initial fake ECR image $(ecr_image_ref "${TEST_SHA_INITIAL}")"
+GIT_SHA="${TEST_SHA_INITIAL}" ./dev/build-test-image.sh >/dev/null
 
 cat <<INFO
 

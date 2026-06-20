@@ -19,6 +19,6 @@ spec:
     spec:
       containers:
         - name: demo
-          image: 000000000000.dkr.ecr.us-east-1.amazonaws.com/demo-app:dev-initial
+          image: 000000000000.dkr.ecr.us-east-1.amazonaws.com/demo-app:0000000000000000000000000000000000000001
           imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "-c", "cat /version.txt && sleep infinity"]

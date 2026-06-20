@@ -79,6 +79,13 @@ send_ecr_event() {
   env "${env_args[@]}" "${ROOT_DIR}/dev/send-test-event.sh"
 }
 
+build_test_image() {
+  local git_sha="${1:?git sha required}"
+  local source_bust="${2:-0}"
+
+  GIT_SHA="$git_sha" SOURCE_BUST="$source_bust" "${ROOT_DIR}/dev/build-test-image.sh"
+}
+
 pass() {
   echo "PASS: $*"
 }

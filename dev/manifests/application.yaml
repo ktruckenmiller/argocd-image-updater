@@ -14,7 +14,7 @@ spec:
     path: test/e2e/testdata/005-public-guestbook
     kustomize:
       images:
-        - demo-app=000000000000.dkr.ecr.us-east-1.amazonaws.com/demo-app:dev-initial
+        - demo-app=000000000000.dkr.ecr.us-east-1.amazonaws.com/demo-app:0000000000000000000000000000000000000001
   destination:
     server: https://kubernetes.default.svc
     namespace: default
