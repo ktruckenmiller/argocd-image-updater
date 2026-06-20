@@ -205,6 +205,7 @@ This enables a CRD-driven approach to automated image updates with Argo CD.
 
 			// Controller mode: Reconcile runs and finalizers clean up metrics on CR delete.
 			cfg.EnableCRMetrics = true
+			cfg.EventFreshness = argocd.NewEventFreshnessStore()
 
 			reconciler := &controller.ImageUpdaterReconciler{
 				Client:                  mgr.GetClient(),
@@ -244,6 +245,20 @@ This enables a CRD-driven approach to automated image updates with Argo CD.
 				setupLogger.Info("Webhook server runnable added to manager")
 			} else {
 				setupLogger.Info("webhook server is disabled, skip adding webhook server runnable to manager")
+			}
+
+			if cfg.EnableSQS && cfg.SQSQueueURL != "" {
+				setupLogger.Info("Adding SQS poller as a Runnable to the manager.")
+				if err := mgr.Add(&SQSPollerRunnable{
+					Reconciler: reconciler,
+					Config:     cfg,
+				}); err != nil {
+					setupLogger.Error(err, "unable to add SQS poller to manager")
+					return err
+				}
+				setupLogger.Info("SQS poller runnable added to manager")
+			} else if cfg.EnableSQS {
+				setupLogger.Info("SQS poller is enabled but queue URL is empty, skipping")
 			}
 
 			if err = reconciler.SetupWithManager(mgr); err != nil {
@@ -343,6 +358,16 @@ This enables a CRD-driven approach to automated image updates with Argo CD.
 	controllerCmd.Flags().StringVar(&webhookCfg.TLSMinVersion, "tlsminversion", env.GetStringVal("TLS_MIN_VERSION", webhook.DefaultTLSMinVersion), "Minimum TLS version (e.g. 1.2, 1.3)")
 	controllerCmd.Flags().StringVar(&webhookCfg.TLSMaxVersion, "tlsmaxversion", env.GetStringVal("TLS_MAX_VERSION", webhook.DefaultTLSMaxVersion), "Maximum TLS version (e.g. 1.2, 1.3)")
 	controllerCmd.Flags().StringVar(&webhookCfg.TLSCiphers, "tlsciphers", env.GetStringVal("TLS_CIPHERS", ""), "Colon-separated list of TLS cipher suites (e.g. TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384:TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256)")
+
+	// AWS SQS / ECR event flags
+	controllerCmd.Flags().BoolVar(&cfg.EnableSQS, "enable-sqs", env.GetBoolVal("ENABLE_SQS", false), "Enable SQS poller for AWS ECR EventBridge push events")
+	controllerCmd.Flags().StringVar(&cfg.SQSQueueURL, "sqs-queue-url", env.GetStringVal("SQS_QUEUE_URL", ""), "SQS queue URL for ECR push events")
+	controllerCmd.Flags().StringVar(&cfg.AWSRegion, "aws-region", env.GetStringVal("AWS_REGION", ""), "AWS region for SQS and ECR API calls")
+	controllerCmd.Flags().StringVar(&cfg.AWSEndpointURL, "aws-endpoint-url", env.GetStringVal("AWS_ENDPOINT_URL", ""), "Custom AWS endpoint URL (e.g. LocalStack)")
+	controllerCmd.Flags().BoolVar(&cfg.ECRFallbackOnDescribeError, "ecr-fallback-on-describe-error", env.GetBoolVal("ECR_FALLBACK_ON_DESCRIBE_ERROR", false), "Use ECR push event digest/time when DescribeImages fails")
+	controllerCmd.Flags().Int32Var(&cfg.SQSMaxMessages, "sqs-max-messages", int32(env.ParseNumFromEnv("SQS_MAX_MESSAGES", 10, 1, 10)), "Maximum SQS messages per receive call")
+	controllerCmd.Flags().Int32Var(&cfg.SQSWaitSeconds, "sqs-wait-seconds", int32(env.ParseNumFromEnv("SQS_WAIT_SECONDS", 20, 0, 20)), "SQS long-poll wait time in seconds")
+	controllerCmd.Flags().Int32Var(&cfg.SQSVisibilityTimeout, "sqs-visibility-timeout", int32(env.ParseNumFromEnv("SQS_VISIBILITY_TIMEOUT", 60, 0, 43200)), "SQS visibility timeout in seconds")
 
 	return controllerCmd
 }

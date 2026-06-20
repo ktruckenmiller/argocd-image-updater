@@ -1,0 +1,20 @@
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: demo-app
+  namespace: argocd
+spec:
+  commonUpdateSettings:
+    updateStrategy: newest-build
+    forceUpdate: true
+    allowTags: "regexp:^[0-9a-f]{40}$"
+  writeBackConfig:
+    method: argocd
+  applicationRefs:
+    - namePattern: demo-app
+      images:
+        - alias: demo
+          imageName: 000000000000.dkr.ecr.us-east-1.amazonaws.com/demo-app:0000000000000000000000000000000000000001
+          manifestTargets:
+            kustomize:
+              name: demo-app

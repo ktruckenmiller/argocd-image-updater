@@ -1,0 +1,15 @@
+services:
+  localstack:
+    image: localstack/localstack:4.4
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=ecr,events,sqs,sts,iam
+      - DEBUG=0
+      - EAGER_SERVICE_LOADING=1
+      - LOCALSTACK_AUTH_TOKEN
+    volumes:
+      - localstack-data:/var/lib/localstack
+
+volumes:
+  localstack-data:

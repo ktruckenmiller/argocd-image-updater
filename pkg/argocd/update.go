@@ -106,59 +106,74 @@ func UpdateApplication(ctx context.Context, updateConf *UpdateConfiguration, sta
 			GetPlatformOptions(imageOpCtx, updateConf.IgnorePlatforms, applicationImage.Platforms).
 			WithMetadata(vc.Strategy.NeedsMetadata())
 
-		// If a strategy needs meta-data and tagsortmode is set for the
-		// registry, let the user know.
-		if rep.TagListSort > registry.TagListSortUnsorted && vc.Strategy.NeedsMetadata() {
-			imgCtx.Infof("taglistsort is set to '%s' but update strategy '%s' requires metadata. Results may not be what you expect.", rep.TagListSort.String(), vc.Strategy.String())
+		var tags *tag.ImageTagList
+		eventTags := resolveEventDrivenTags(imageOpCtx, updateConf, applicationImage, rep, &vc)
+		if eventTags.skipped {
+			result.NumSkipped += 1
+			continue
 		}
-
-		// retrieves an image's pull secret credentials
-		secretVal := applicationImage.PullSecret
-		if secretVal == "" {
-			imgCtx.Tracef("No pull secret configured for this image")
-		}
-		// The endpoint can provide default credentials for pulling images
-		creds, err := rep.SetEndpointCredentials(imageOpCtx, updateConf.KubeClient.KubeClient, secretVal)
-		if err != nil {
-			imgCtx.Errorf("Could not set registry endpoint credentials: %v", err)
+		if eventTags.err != nil {
+			imgCtx.Errorf("Could not resolve event-driven image tag: %v", eventTags.err)
 			result.NumErrors += 1
 			continue
 		}
+		tags = eventTags.tags
 
-		regClient, err := updateConf.NewRegFN(rep, creds.Username, creds.Password)
-		if err != nil {
-			imgCtx.Errorf("Could not create registry client: %v", err)
-			result.NumErrors += 1
-			continue
-		}
-
-		// Get list of available image tags from the repository
-		// Load creds, create registry client, fetch tags (retry once on 401/403)
-		tags, err := rep.GetTags(imageOpCtx, applicationImage.ContainerImage, regClient, &vc, secretVal == "")
-		if err != nil {
-			// Retry once on 401/403
-			if errors.Is(err, registry.ErrCredentialsInvalid) {
-				imgCtx.Infof("credentials invalid (401/403), refetching and retrying once")
-				// The endpoint can provide default credentials for pulling images
-				creds, err = rep.SetEndpointCredentials(imageOpCtx, updateConf.KubeClient.KubeClient, secretVal)
-				if err != nil {
-					imgCtx.Errorf("Could not set registry endpoint credentials: %v", err)
-					result.NumErrors += 1
-					continue
-				}
-
-				regClient, err = updateConf.NewRegFN(rep, creds.Username, creds.Password)
-				if err != nil {
-					imgCtx.Errorf("Could not create registry client: %v", err)
-					result.NumErrors += 1
-					continue
-				}
-				tags, err = rep.GetTags(imageOpCtx, applicationImage.ContainerImage, regClient, &vc, secretVal == "")
+		if tags == nil {
+			// If a strategy needs meta-data and tagsortmode is set for the
+			// registry, let the user know.
+			if rep.TagListSort > registry.TagListSortUnsorted && vc.Strategy.NeedsMetadata() {
+				imgCtx.Infof("taglistsort is set to '%s' but update strategy '%s' requires metadata. Results may not be what you expect.", rep.TagListSort.String(), vc.Strategy.String())
 			}
+
+			// retrieves an image's pull secret credentials
+			secretVal := applicationImage.PullSecret
+			if secretVal == "" {
+				imgCtx.Tracef("No pull secret configured for this image")
+			}
+			// The endpoint can provide default credentials for pulling images
+			creds, err := rep.SetEndpointCredentials(imageOpCtx, updateConf.KubeClient.KubeClient, secretVal)
 			if err != nil {
-				imgCtx.Errorf("Could not get tags from registry: %v", err)
+				imgCtx.Errorf("Could not set registry endpoint credentials: %v", err)
 				result.NumErrors += 1
 				continue
+			}
+
+			regClient, err := updateConf.NewRegFN(rep, creds.Username, creds.Password)
+			if err != nil {
+				imgCtx.Errorf("Could not create registry client: %v", err)
+				result.NumErrors += 1
+				continue
+			}
+
+			// Get list of available image tags from the repository
+			// Load creds, create registry client, fetch tags (retry once on 401/403)
+			tags, err = rep.GetTags(imageOpCtx, applicationImage.ContainerImage, regClient, &vc, secretVal == "")
+			if err != nil {
+				// Retry once on 401/403
+				if errors.Is(err, registry.ErrCredentialsInvalid) {
+					imgCtx.Infof("credentials invalid (401/403), refetching and retrying once")
+					// The endpoint can provide default credentials for pulling images
+					creds, err = rep.SetEndpointCredentials(imageOpCtx, updateConf.KubeClient.KubeClient, secretVal)
+					if err != nil {
+						imgCtx.Errorf("Could not set registry endpoint credentials: %v", err)
+						result.NumErrors += 1
+						continue
+					}
+
+					regClient, err = updateConf.NewRegFN(rep, creds.Username, creds.Password)
+					if err != nil {
+						imgCtx.Errorf("Could not create registry client: %v", err)
+						result.NumErrors += 1
+						continue
+					}
+					tags, err = rep.GetTags(imageOpCtx, applicationImage.ContainerImage, regClient, &vc, secretVal == "")
+				}
+				if err != nil {
+					imgCtx.Errorf("Could not get tags from registry: %v", err)
+					result.NumErrors += 1
+					continue
+				}
 			}
 		}
 
@@ -178,6 +193,15 @@ func UpdateApplication(ctx context.Context, updateConf *UpdateConfiguration, sta
 		// at all in the repository)
 		if latest == nil {
 			imgCtx.Debugf("No suitable image tag for upgrade found in list of available tags.")
+			result.NumSkipped += 1
+			continue
+		}
+
+		stale, staleErr := skipIfStaleEventDrivenUpdate(imageOpCtx, updateConf, applicationImage, rep, latest)
+		if staleErr != nil {
+			imgCtx.Warnf("Could not check event freshness, proceeding with update: %v", staleErr)
+		} else if stale {
+			imgCtx.Infof("Skipping stale event-driven update for %s: candidate is not newer than the application image", latest.String())
 			result.NumSkipped += 1
 			continue
 		}
@@ -261,6 +285,7 @@ func UpdateApplication(ctx context.Context, updateConf *UpdateConfiguration, sta
 				result.NumImagesUpdated = 0
 			} else {
 				baseLogger.Infof("Successfully updated the live application spec")
+				recordEventDrivenWrite(updateConf, changeList)
 				if !updateConf.DisableKubeEvents && updateConf.KubeClient != nil {
 					annotations := map[string]string{}
 					for i, c := range changeList {
